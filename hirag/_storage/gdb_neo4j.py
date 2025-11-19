@@ -89,9 +89,39 @@ class Neo4jStorage(BaseGraphStorage):
         # TODOLater: create database if not exists always cause an error when async
         # await self.create_database()
 
+    async def _check_existing_data(self) -> tuple[int, int]:
+        """Check if there are existing nodes and edges in Neo4j for this namespace.
+        Returns (node_count, edge_count)"""
+        async with self.async_driver.session() as session:
+            # Count nodes
+            node_result = await session.run(
+                f"MATCH (n:{self.namespace}) RETURN COUNT(n) AS count"
+            )
+            node_record = await node_result.single()
+            node_count = node_record["count"] if node_record else 0
+            
+            # Count edges
+            edge_result = await session.run(
+                f"MATCH (s:{self.namespace})-[r]->(t:{self.namespace}) RETURN COUNT(r) AS count"
+            )
+            edge_record = await edge_result.single()
+            edge_count = edge_record["count"] if edge_record else 0
+            
+            return node_count, edge_count
+
     async def index_start_callback(self):
         logger.info("Init Neo4j workspace")
         await self._init_workspace()
+        # Check for existing data
+        node_count, edge_count = await self._check_existing_data()
+        if node_count > 0 or edge_count > 0:
+            logger.info(
+                f"Found existing Neo4j data in namespace '{self.namespace}': "
+                f"{node_count} nodes, {edge_count} edges. "
+                f"Existing data will be preserved, only new documents will be indexed."
+            )
+        else:
+            logger.info(f"No existing data found in namespace '{self.namespace}'. Starting fresh index.")
 
     async def has_node(self, node_id: str) -> bool:
         async with self.async_driver.session() as session:
